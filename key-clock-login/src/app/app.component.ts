@@ -1,7 +1,7 @@
 import { HttpClient } from '@angular/common/http';
 import { Component } from '@angular/core';
 import { KeycloakService } from 'keycloak-angular';
-import { firstValueFrom } from 'rxjs';  
+import { firstValueFrom } from 'rxjs';
 
 @Component({
   selector: 'app-root',
@@ -39,10 +39,10 @@ export class AppComponent {
   }
 
   async callBackend() {
-    this.response = await this.makeRequest('http://localhost:8081/auth/check');
+    this.response = await this.makeRequest('https://localhost:8081/auth/check');
   }
 
   async callAdmin() {
-    this.response = await this.makeRequest('http://localhost:8081/auth/admin');
+    this.response = await this.makeRequest('https://localhost:8081/auth/admin');
   }
 }

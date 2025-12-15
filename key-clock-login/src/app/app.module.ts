@@ -11,7 +11,7 @@ export function initializeKeycloak(keycloak: KeycloakService) {
       config: {
         url: 'http://localhost:8080/',
         realm: 'myrealm',
-        clientId: 'angular-app'
+        clientId: 'angular-app1'
       },
       initOptions: {
         onLoad: 'login-required',
