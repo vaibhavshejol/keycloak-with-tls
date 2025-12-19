@@ -500,3 +500,306 @@ openssl pkcs12 -export \
 | Extractor    | extractor1234   |
 
 ---
+# TLS Setup for Frontend (Angular) and Keycloak
+
+---
+
+## TLS for Frontend (Angular)
+
+The frontend requires a **private key** and a **TLS certificate** so that the Angular development server can run on **HTTPS**.
+
+---
+
+### 1. Generate Frontend Private Key
+
+```bash
+openssl genrsa -out frontend.key 2048
+```
+
+**Why this command is used**
+
+* Generates a private key for the frontend server
+* Required to encrypt and decrypt TLS traffic
+
+**What it does**
+
+* `genrsa` → generates an RSA private key
+* `2048` → key size (secure and widely supported)
+* **Output**: `frontend.key`
+
+---
+
+### 2. Create Certificate Signing Request (CSR)
+
+```bash
+openssl req -new \
+  -key frontend.key \
+  -out frontend.csr
+```
+
+**Why this command is used**
+
+* A CSR is required to request a certificate from a Certificate Authority (CA)
+* Contains the public key and identity information (CN, organization, etc.)
+
+**What it does**
+
+* `-new` → creates a new CSR
+* `-key frontend.key` → uses the frontend private key
+* **Output**: `frontend.csr`
+
+---
+
+### 3. Sign CSR Using Internal CA
+
+```bash
+openssl x509 -req \
+  -in frontend.csr \
+  -CA ../auth-service/myCA.crt \
+  -CAkey ../auth-service/myCA.key \
+  -CAcreateserial \
+  -out frontend.crt \
+  -days 365 \
+  -sha256
+```
+
+**Why this command is used**
+
+* Converts the CSR into a trusted TLS certificate
+* The certificate is trusted because it is signed by the internal CA (`myCA`)
+
+**What it does**
+
+* `-req` → input is a CSR
+* `-CA myCA.crt` → CA certificate
+* `-CAkey myCA.key` → CA private key used for signing
+* `-CAcreateserial` → creates a serial number file for the CA
+* `-days 365` → certificate validity period
+* `-sha256` → secure hashing algorithm
+* **Output**: `frontend.crt`
+
+---
+
+### 4. Enable HTTPS in Angular
+
+**`angular.json`**
+
+```json
+"serve": {
+  "options": {
+    "ssl": true,
+    "sslKey": "frontend.key",
+    "sslCert": "frontend.crt"
+  }
+}
+```
+
+**Why this is required**
+
+* Angular dev server runs on HTTP by default
+* HTTPS is required for OAuth2 / OIDC authentication with Keycloak
+
+**What it does**
+
+* `ssl: true` → enables HTTPS
+* `sslKey` → frontend private key
+* `sslCert` → TLS certificate
+
+---
+
+## TLS for Keycloak
+
+Keycloak must run on **HTTPS** to ensure secure authentication, cookies, and OAuth/OIDC flows.
+
+---
+
+### 1. Generate Keycloak Private Key
+
+```bash
+openssl genrsa -out keycloak.key 2048
+```
+
+**Why**
+
+* Creates the private key for the Keycloak HTTPS server
+
+**What it does**
+
+* Generates a 2048-bit RSA private key
+
+---
+
+### 2. Create CSR for Keycloak
+
+```bash
+openssl req -new \
+  -key keycloak.key \
+  -out keycloak.csr
+```
+
+**Why**
+
+* A CSR is required to request a CA-signed certificate for Keycloak
+
+---
+
+### 3. Create Extension File (SAN Support)
+
+**`keycloak.ext`**
+
+```ini
+authorityKeyIdentifier=keyid,issuer
+basicConstraints=CA:FALSE
+keyUsage = digitalSignature, keyEncipherment
+extendedKeyUsage = serverAuth
+subjectAltName = @alt_names
+
+[alt_names]
+DNS.1 = localhost
+IP.1 = 127.0.0.1
+```
+
+**Why this file is important**
+
+* Modern browsers require **Subject Alternative Name (SAN)**
+* Common Name (CN) alone is no longer sufficient
+
+**What each field means**
+
+* `CA:FALSE` → certificate is not a Certificate Authority
+* `keyUsage` → allowed cryptographic operations
+* `extendedKeyUsage = serverAuth` → valid for HTTPS servers
+* `subjectAltName` → hostnames and IPs Keycloak runs on
+
+---
+
+### 4. Sign Keycloak Certificate with CA
+
+```bash
+openssl x509 -req \
+  -in keycloak.csr \
+  -CA myCA.crt \
+  -CAkey myCA.key \
+  -CAcreateserial \
+  -out keycloak.crt \
+  -days 825 \
+  -sha256 \
+  -extfile keycloak.ext
+```
+
+**Why**
+
+* Creates a CA-trusted TLS certificate for Keycloak
+
+**What it does**
+
+* Signs the CSR using the internal CA
+* Applies SAN configuration from `keycloak.ext`
+
+---
+
+### 5. Convert Certificate to PKCS12 Keystore
+
+```bash
+openssl pkcs12 -export \
+  -inkey keycloak.key \
+  -in keycloak.crt \
+  -certfile myCA.crt \
+  -out keycloak.p12 \
+  -name keycloak \
+  -password pass:keycloak1234
+```
+
+**Why this is required**
+
+* Keycloak does not accept PEM files directly
+* Requires a keystore in **PKCS12** format
+
+**What it does**
+
+* Combines private key, certificate, and CA certificate
+* Produces `keycloak.p12`
+
+---
+
+## Running Keycloak with HTTPS (Docker)
+
+```bash
+docker run -d ^
+  --name keycloak_24.0.1 ^
+  -p 8080:8443 ^
+  -e KEYCLOAK_ADMIN=admin ^
+  -e KEYCLOAK_ADMIN_PASSWORD=admin ^
+  -e KC_HOSTNAME=localhost ^
+  -e KC_HOSTNAME_PORT=8080 ^
+  -e KC_SPI_LOGIN_PROTOCOL_OPENID_CONNECT_CHECK_LOGIN_IFRAME=false ^
+  -e KC_HTTPS_KEY_STORE_FILE=/opt/keycloak/conf/keycloak.p12 ^
+  -e KC_HTTPS_KEY_STORE_PASSWORD=keycloak1234 ^
+  -e KC_HTTPS_KEY_STORE_TYPE=PKCS12 ^
+  -v "D:/CENNOX/keycloak-with-tls-old/auth-service/keycloak.p12:/opt/keycloak/conf/keycloak.p12" ^
+  quay.io/keycloak/keycloak:24.0.1 ^
+  start
+```
+
+### Why these options are used
+
+| Option                        | Purpose                           |
+| ----------------------------- | --------------------------------- |
+| `-p 8080:8443`                | Maps host HTTPS port to container |
+| `KC_HTTPS_KEY_STORE_FILE`     | Path to TLS keystore              |
+| `KC_HTTPS_KEY_STORE_PASSWORD` | Keystore password                 |
+| `KC_HTTPS_KEY_STORE_TYPE`     | Keystore format (PKCS12)          |
+| `-v`                          | Mounts keystore into container    |
+
+---
+
+## Backend (Spring Boot) – Trusting the CA
+
+The backend service must trust Keycloak's TLS certificate. Since Keycloak uses a certificate signed by an internal CA (`myCA`), the backend JVM must be configured with a custom truststore.
+
+---
+
+### Truststore Configuration
+
+**`build.gradle`**
+
+```gradle
+bootRun {
+    jvmArgs = [
+        "-Djavax.net.ssl.trustStore=src/main/resources/truststore.p12",
+        "-Djavax.net.ssl.trustStorePassword=trustpass",
+        "-Djavax.net.ssl.trustStoreType=PKCS12"
+    ]
+}
+````
+
+---
+
+### Why this is required
+
+* The backend communicates with Keycloak over **HTTPS**
+* Keycloak uses a certificate signed by **myCA**, not a public CA
+* The JVM does **not trust internal CAs by default**
+* Without this configuration, the backend will fail with:
+
+  ```
+  SSLHandshakeException
+  ```
+
+---
+
+### What it does
+
+* Loads a **custom truststore** at application startup
+* The truststore contains `myCA.crt`
+* Allows the backend to trust all certificates signed by the internal CA
+
+---
+
+### Result
+
+* Secure HTTPS communication between Backend and Keycloak
+* No SSL handshake or certificate validation errors
+---
+
+
